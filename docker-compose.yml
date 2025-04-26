@@ -1,0 +1,117 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  mysql:
+    image: quay.io/debezium/example-mysql:3.1
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: demo
+      MYSQL_USER: mysqluser
+      MYSQL_PASSWORD: mysqlpw
+    volumes:
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/inventory.sql
+
+  target-db:
+    image: quay.io/debezium/example-mysql:3.1
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: demo
+      MYSQL_USER: mysqluser
+      MYSQL_PASSWORD: mysqlpw
+    volumes:
+      - ./mysql/init-destination.sql:/docker-entrypoint-initdb.d/inventory.sql
+
+
+# - MYSQL_ROOT_PASSWORD=debezium
+#      - MYSQL_USER=mysqluser
+#      - MYSQL_PASSWORD=mysqlpw
+  # mysql:
+  #   image: mysql:8
+  #   ports:
+  #     - "3306:3306"
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: root
+  #     MYSQL_DATABASE: demo
+  #   command: 
+  #     - --server-id=223344
+  #     - --log-bin=mysql-bin
+  #     - --binlog-format=ROW
+  #     - --binlog-row-image=FULL
+  #     - --gtid-mode=OFF
+  #     - --enforce-gtid-consistency=OFF
+
+  #   volumes:
+  #     - mysql_data:/var/lib/mysql
+  #     - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  kafka-connect:
+    build: .
+    depends_on:
+      - kafka
+      - mysql
+    ports:
+      - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECT_REST_PORT: 8083
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect  # ✅ Required for Debezium image
+      CONNECT_GROUP_ID: "connect-cluster"
+      CONNECT_CONFIG_STORAGE_TOPIC: "connect-configs"
+      CONNECT_OFFSET_STORAGE_TOPIC: "connect-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "connect-statuses"
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/java/kafka-connect-plugins"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+
+
+  consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.consumer
+    depends_on:
+      - kafka
+    volumes:
+      - ./consumer:/app
+    restart: unless-stopped
+    tty: true
+
+  kafdrop:
+    image: obsidiandynamics/kafdrop
+    ports:
+      - "9000:9000"
+    environment:
+      KAFKA_BROKER_CONNECT: kafka:9092
+      JVM_OPTS: "-Xms32M -Xmx64M"
+    depends_on:
+      - kafka
+
+
+volumes:
+  mysql_data:
